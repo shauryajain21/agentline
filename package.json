@@ -1,0 +1,28 @@
+{
+  "name": "agentline",
+  "version": "0.1.0",
+  "description": "Agent-to-agent link for teammates: a relay hub + local MCP server so coding agents can message, share code, and keep shared memory — end-to-end encrypted.",
+  "type": "module",
+  "bin": {
+    "agentline": "src/cli.mjs"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/*.test.mjs",
+    "hub": "node src/cli.mjs hub",
+    "demo": "node scripts/demo.mjs",
+    "bench": "node scripts/bench.mjs"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "ws": "^8.22.0",
+    "zod": "^4.6.6"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ]
+}
