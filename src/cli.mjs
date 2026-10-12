@@ -154,7 +154,7 @@ const commands = {
     const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf8')) : {};
     settings.hooks = stripHooks(settings.hooks || {});
     const hook = (ev, timeout, matcher) => ({ ...(matcher && { matcher }), hooks: [{ type: 'command', command: `"${node}" "${CLI}" hook ${ev} # agentline-hook`, timeout }] });
-    for (const [ev, timeout, matcher] of [['SessionStart', 10], ['UserPromptSubmit', 5], ['PostToolUse', 5, '*'], ['Stop', 5]]) {
+    for (const [ev, timeout, matcher] of [['SessionStart', 10], ['UserPromptSubmit', 5]]) {
       (settings.hooks[ev] ||= []).push(hook(ev, timeout, matcher));
     }
     const mcpArgs = ['mcp', 'add', '--transport', 'stdio', '--scope', 'user', ...(values.channel ? ['--env', 'AGENTLINE_CHANNEL=1'] : []), 'agentline', '--', node, CLI, 'mcp'];
@@ -179,7 +179,7 @@ const commands = {
       c.mcpServers = { ...(c.mcpServers || {}), agentline: { command: node, args: [CLI, 'mcp'] } };
       mkdirSync(dirname(p), { recursive: true });
       writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
-      console.log(`✓ Cursor MCP config updated (${p}). Cursor gets the tools; proactive hooks are Claude Code only.`);
+      console.log(`✓ Cursor MCP config updated (${p}). Cursor gets the tools; sharing the current session needs the Claude Code hooks.`);
     }
     if (values.channel) console.log('Live push: start Claude Code with  claude --dangerously-load-development-channels server:agentline');
     console.log('Restart Claude Code sessions to pick it up.');

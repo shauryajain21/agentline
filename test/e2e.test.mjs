@@ -1,5 +1,6 @@
 // End-to-end: a real hub, two teammates with separate AGENTLINE_HOMEs, two clones of the same repo,
-// two real MCP servers over stdio, and the Claude Code hooks fed with realistic stdin.
+// two real MCP servers over stdio, the Claude Code hooks fed with realistic stdin, and a realistic
+// Claude Code transcript that alice shares and bob's agent queries.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -63,147 +64,97 @@ before(async () => {
 
 after(async () => { await A?.c.close(); await B?.c.close(); await hub?.close(); });
 
-test('exposes the agent toolset with instructions', async () => {
+// A Claude Code transcript (JSONL) the way Claude Code writes it.
+function transcript(file, turns) {
+  const line = (type, content, extra = {}) => JSON.stringify({ type, message: { role: type === 'user' ? 'user' : 'assistant', content }, ...extra });
+  const out = [JSON.stringify({ type: 'queue-operation', operation: 'enqueue' })];
+  for (const [prompt, reply, cmd, result] of turns) {
+    out.push(line('user', `<system-reminder>internal note</system-reminder>${prompt}`));
+    out.push(line('assistant', [{ type: 'thinking', thinking: 'private reasoning' }, { type: 'text', text: reply }]));
+    if (cmd) {
+      out.push(line('assistant', [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: cmd } }]));
+      out.push(line('user', [{ type: 'tool_result', tool_use_id: 't1', content: result }]));
+    }
+  }
+  out.push(line('user', 'side quest', { isSidechain: true }));
+  writeFileSync(file, out.join('\n') + '\n');
+}
+const transcriptA = join(root, 'alice-session.jsonl');
+const OPENAI_KEY = 'sk-proj-' + 'Abc123'.repeat(10);
+
+test('exposes only the session-sharing tools', async () => {
   const { tools } = await A.c.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(),
-    ['ask', 'context', 'forget', 'inbox', 'log', 'permissions', 'read', 'recall', 'remember', 'send', 'share', 'status'].sort());
-  assert.match(A.c.getInstructions(), /autonomy=ask/);
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['permissions', 'query_session', 'share_session', 'shared_sessions']);
+  assert.match(A.c.getInstructions(), /ONLY when your human explicitly asks/);
 });
 
-test('status + presence are shared', async () => {
-  await A.call('status', { text: 'refactoring token signing in src/auth.ts' });
-  await sleep(150);
-  const team = await B.call('status');
-  assert.match(team, /alice: online — refactoring token signing/);
-  assert.match(team, /demo@main/);
-});
-
-test('direct message is pushed and appears in inbox once', async () => {
-  assert.match(await A.call('send', { text: 'heads up: TOKEN_TTL moving to config', to: 'bob' }), /sent #\d+ → bob/);
-  const inbox = await B.call('inbox', { wait_s: 5 });
-  assert.match(inbox, /alice \(agent, demo@main\) → you/);
-  assert.match(inbox, /TOKEN_TTL moving to config/);
-  assert.equal(await B.call('inbox'), 'No new messages.');
-});
-
-test('ask waits for the other agent to answer in-thread', async () => {
-  const asking = B.call('ask', { question: 'what TTL do you want for refresh tokens?', to: 'alice', wait_s: 15 });
-  const q = await A.call('inbox', { wait_s: 5 });
-  const id = Number(q.match(/#(\d+) bob.*question/)[1]);
-  await A.call('send', { text: '30 days, rotate on use', thread: id });
-  const answer = await asking;
-  assert.match(answer, /30 days, rotate on use/);
-  assert.match(answer, new RegExp(`re #${id}`));
-});
-
-test('share a file range and a diff; read returns full content', async () => {
-  writeFileSync(join(repoA, 'src', 'auth.ts'), 'export const TOKEN_TTL = Number(process.env.TTL);\nexport function sign(u) {\n  return jwt(u);\n}\n');
-  const s = await A.call('share', { note: 'new signing entrypoint', path: 'src/auth.ts', lines: '2-4', diff: 'HEAD' });
-  const id = Number(s.match(/#(\d+)/)[1]);
-  await sleep(200);
-  const full = await B.call('read', { id });
-  assert.match(full, /\[file src\/auth\.ts:2-4, 3 lines\]/);
-  assert.match(full, /return jwt\(u\);/);
-  assert.match(full, /-export const TOKEN_TTL = 3600;/);
-});
-
-test('shared memory is two-way', async () => {
-  await A.call('remember', { key: 'api/token-format', value: 'JWT, HS256, claims: sub, org, exp', tags: ['auth'] });
-  await sleep(150);
-  assert.match(await B.call('recall', { key: 'api/token-format' }), /HS256/);
-  await B.call('remember', { key: 'decision/db', value: 'Postgres 17 on Neon' });
-  await sleep(150);
-  assert.match(await A.call('recall', { query: 'postgres' }), /decision\/db/);
-  assert.match(await A.call('recall'), /api\/token-format/);
-  await B.call('forget', { key: 'decision/db' });
-  await sleep(150);
-  assert.doesNotMatch(await A.call('recall'), /decision\/db/);
-});
-
-test('worklog + overlap detection across clones of the same repo', async () => {
-  for (const f of ['src/auth.ts', 'src/config.ts', 'src/auth.ts']) {
-    await hook(homeA, 'PostToolUse', { session_id: 'sA', cwd: repoA, tool_name: 'Edit', tool_input: { file_path: join(repoA, f) } });
+test('nothing is shared unless asked: hooks only record the session', async () => {
+  transcript(transcriptA, [
+    ['let us add cursor pagination to search()', 'Plan: switch search() to cursor pagination in src/search.ts.', 'npm test', 'ok 12 tests'],
+    [`deploy with OPENAI_API_KEY=${OPENAI_KEY}`, 'Deployed to Railway; hub at https://hub.example.com', 'railway up', 'Deploy complete'],
+  ]);
+  const before = (await B.call('shared_sessions'));
+  for (const ev of ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop']) {
+    await hook(homeA, ev, { session_id: 'sA', cwd: repoA, transcript_path: transcriptA, prompt: 'hi', tool_name: 'Edit', tool_input: { file_path: join(repoA, 'src/auth.ts') } });
   }
-  const logged = await A.call('log', { summary: 'Moved TOKEN_TTL to env config; sign() unchanged', next: 'refresh-token rotation' });
-  assert.match(logged, /logged #\d+ for demo \(2 files\)/);
   await sleep(200);
-  // Bob's agent opens the same file in *their* checkout -> heads-up about Alice's work.
-  const out = ctx(await hook(homeB, 'PostToolUse', { session_id: 'sB', cwd: repoB, tool_name: 'Read', tool_input: { file_path: join(repoB, 'src/auth.ts') } }));
-  assert.match(out, /Heads-up: alice worked on src\/auth\.ts/);
-  assert.match(out, /refresh-token rotation/);
-  // only once per file per session
-  assert.equal(ctx(await hook(homeB, 'PostToolUse', { session_id: 'sB', cwd: repoB, tool_name: 'Read', tool_input: { file_path: join(repoB, 'src/auth.ts') } })), '');
-  const c = await B.call('context', { query: 'TOKEN_TTL' });
-  assert.match(c, /Teammate worklogs/);
-  assert.match(c, /Moved TOKEN_TTL/);
+  assert.equal(before, 'No sessions have been shared yet.');
+  assert.equal(await B.call('shared_sessions'), 'No sessions have been shared yet.');
+  const db = openDb(join(root, 'hub.db'));
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM messages').get().n, 0);
+  db.close();
 });
 
-test('session start briefing tells the agent what the teammate did', async () => {
-  const out = ctx(await hook(homeB, 'SessionStart', { session_id: 'sB2', cwd: repoB, source: 'startup' }));
-  assert.match(out, /linked with alice/);
-  assert.match(out, /Moved TOKEN_TTL to env config/);
-  assert.match(out, /Shared team memory/);
+test('share_session sends the current session, redacted', async () => {
+  const out = await A.call('share_session', { to: 'bob', title: 'search pagination' });
+  assert.match(out, /shared this session as #\d+ → bob: "search pagination", 8 entries/);
+  await sleep(200);
+  assert.match(await B.call('shared_sessions'), /#\d+ alice → you · "search pagination" · 8 entries · demo@main/);
+  // bob's next prompt mentions it once
+  assert.match(ctx(await hook(homeB, 'UserPromptSubmit', { session_id: 'sB', cwd: repoB, transcript_path: join(root, 'b.jsonl'), prompt: 'hi' })), /alice's session "search pagination"/);
+  assert.equal(await hook(homeB, 'UserPromptSubmit', { session_id: 'sB', cwd: repoB, prompt: 'again' }), null);
 });
 
-test('teammate messages are injected on the next prompt/tool call', async () => {
-  await A.call('send', { text: 'pushed the env change, pull before editing auth', to: 'bob' });
-  await sleep(200);
-  const out = ctx(await hook(homeB, 'UserPromptSubmit', { session_id: 'sB2', cwd: repoB, prompt: 'continue' }));
-  assert.match(out, /\[agentline\] 1 new/);
-  assert.match(out, /pull before editing auth/);
-  assert.equal(await hook(homeB, 'UserPromptSubmit', { session_id: 'sB2', cwd: repoB, prompt: 'x' }), null); // consumed
+test('the teammate agent can query the shared session', async () => {
+  const outline = await B.call('query_session', { from: 'alice' });
+  assert.match(outline, /Session #\d+ shared by alice .*"search pagination"/);
+  assert.match(outline, /\[1\] USER: let us add cursor pagination to search\(\)/);
+  assert.ok(!outline.includes('internal note') && !outline.includes('private reasoning') && !outline.includes('side quest'));
+
+  const hit = await B.call('query_session', { query: 'railway deploy' });
+  assert.match(hit, /AGENT: Deployed to Railway/);
+  assert.ok(!hit.includes(OPENAI_KEY), 'API key leaked');
+  assert.match(hit, /OPENAI_API_KEY=\[REDACTED\]/);
+
+  const range = await B.call('query_session', { entries: '3-4' });
+  assert.match(range, /\[3\] TOOL CALL: Bash: npm test\n\[4\] TOOL OUTPUT: ok 12 tests/);
+  assert.match(await B.call('query_session', { query: 'kubernetes' }), /Nothing matches/);
 });
 
-test('stop hook: unanswered teammate question blocks once, loop-guarded', async () => {
-  await A.call('send', { text: 'is the /v2/search endpoint paginated?', to: 'bob', kind: 'question' });
+test('sharing again replaces the older copy', async () => {
+  transcript(transcriptA, [
+    ['let us add cursor pagination to search()', 'Plan: cursor pagination.'],
+    ['also update the UI callers', 'Updated web/SearchList.tsx to pass the cursor.'],
+  ]);
+  await A.call('share_session', { to: 'bob', title: 'search pagination' });
   await sleep(200);
-  const out = await hook(homeB, 'Stop', { session_id: 'sB3', cwd: repoB, stop_hook_active: false });
-  assert.equal(out.decision, 'block');
-  assert.match(out.reason, /v2\/search endpoint paginated/);
-  assert.equal(await hook(homeB, 'Stop', { session_id: 'sB3', cwd: repoB, stop_hook_active: true }), null);
-  assert.equal(await hook(homeB, 'Stop', { session_id: 'sB3', cwd: repoB, stop_hook_active: false }), null);
+  const list = await B.call('shared_sessions');
+  assert.equal(list.split('\n').length, 1);
+  assert.match(await B.call('query_session', { query: 'UI callers' }), /SearchList\.tsx/);
 });
 
-test('stop hook: offers to share a worklog after real edits (autonomy=ask)', async () => {
-  for (const f of ['src/a.ts', 'src/b.ts', 'src/c.ts']) {
-    await hook(homeA, 'PostToolUse', { session_id: 'sA2', cwd: repoA, tool_name: 'Write', tool_input: { file_path: join(repoA, f) } });
-  }
-  const out = await hook(homeA, 'Stop', { session_id: 'sA2', cwd: repoA, stop_hook_active: false });
-  assert.equal(out?.decision, 'block');
-  assert.match(out.reason, /offering to share a worklog with bob/);
-  assert.equal(await hook(homeA, 'Stop', { session_id: 'sA2', cwd: repoA }), null); // not again right away
-});
-
-test('shared permissions need both teammates to agree', async () => {
-  assert.match(await A.call('permissions', { propose: { autonomy: 'auto' } }), /waiting for teammates/);
-  await sleep(200);
-  const b = await B.call('permissions');
-  assert.match(b, /Open proposal by alice: \{"autonomy":"auto"\} — waiting on bob/);
-  assert.match(b, /autonomy=ask/);
-  assert.match(await B.call('permissions', { accept: true }), /new permissions are in effect/);
-  await sleep(200);
-  assert.match(await A.call('permissions'), /autonomy=auto/);
-  // with autonomy=auto, the stop nudge tells the agent to post the log itself
-  for (const f of ['src/d.ts', 'src/e.ts', 'src/f.ts']) await hook(homeA, 'PostToolUse', { session_id: 'sA3', cwd: repoA, tool_name: 'Edit', tool_input: { file_path: join(repoA, f) } });
-  assert.match((await hook(homeA, 'Stop', { session_id: 'sA3', cwd: repoA })).reason, /Post a concise worklog/);
-});
-
-test('hooks fall back to HTTP when no MCP server is live', async () => {
-  await B.c.close(); B = null;
-  await sleep(200);
-  await A.call('send', { text: 'ping while your MCP is down', to: 'bob' });
-  const out = ctx(await hook(homeB, 'UserPromptSubmit', { session_id: 'sB4', cwd: repoB, prompt: 'hi' }));
-  assert.match(out, /ping while your MCP is down/);
+test('a huge session is trimmed to fit one message', async () => {
+  const big = join(root, 'big.jsonl');
+  const noise = () => Array.from({ length: 4000 }, () => Math.random().toString(36).slice(2)).join(' ');
+  transcript(big, Array.from({ length: 60 }, (_, i) => [`step ${i}`, `did step ${i}`, 'cat log', noise()]));
+  await hook(homeA, 'UserPromptSubmit', { session_id: 'sBig', cwd: repoA, transcript_path: big, prompt: 'share it' });
+  assert.match(await A.call('share_session', { title: 'big one' }), /shared this session as #\d+ → everyone: "big one", \d+ entries/);
 });
 
 test('hub stores only ciphertext', () => {
   const db = openDb(join(root, 'hub.db'));
-  const dump = JSON.stringify([
-    db.prepare('SELECT blob FROM messages').all(),
-    db.prepare('SELECT kid, blob FROM memory').all(),
-    db.prepare('SELECT status_blob FROM members').all(),
-  ]);
-  for (const secret of ['TOKEN_TTL', 'auth.ts', 'api/token-format', 'HS256', 'refactoring', 'paginated', 'autonomy']) {
+  const dump = JSON.stringify([db.prepare('SELECT blob FROM messages').all(), db.prepare('SELECT status_blob FROM members').all()]);
+  for (const secret of ['pagination', 'Railway', 'SearchList', 'search()', OPENAI_KEY]) {
     assert.ok(!dump.includes(secret), `hub leaked "${secret}"`);
   }
   db.close();
