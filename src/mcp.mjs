@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { getRoom } from './config.mjs';
 import { Agentline } from './client.mjs';
 import { fmtMsg, fmtMember, ago } from './format.mjs';
-import { currentSession, parseTranscript, packEntries, unpack } from './session.mjs';
+import { currentSession, cursorSession, parseTranscript, packEntries, unpack } from './session.mjs';
 import { VERSION } from './version.mjs';
 
 const LABEL = { user: 'USER', agent: 'AGENT', tool: 'TOOL CALL', result: 'TOOL OUTPUT' };
@@ -55,8 +55,10 @@ export async function runMcp() {
       title: z.string().optional().describe('Short title, e.g. "auth refactor"; defaults to the first prompt'),
     },
     async ({ to, title }) => {
-      const cur = currentSession(t.store, t.cwd);
-      if (!cur) return fail('Could not find this session\'s transcript. Run `agentline install` and restart Claude Code (the hooks tell agentline which session is current).');
+      const inCursor = /cursor/i.test(server.server.getClientVersion()?.name || '');
+      const cur = inCursor ? cursorSession(t.cwd) : currentSession(t.store, t.cwd) || cursorSession(t.cwd);
+      if (!cur) return fail(inCursor ? 'Could not find this Cursor conversation\'s transcript under ~/.cursor/projects.'
+        : 'Could not find this session\'s transcript. Run `agentline install` and restart Claude Code (the hooks tell agentline which session is current).');
       const entries = parseTranscript(cur.path);
       if (!entries.length) return fail('This session has no conversation to share yet.');
       const { gz, count, dropped } = packEntries(entries);

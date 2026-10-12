@@ -44,9 +44,9 @@ function makeRepo(dir) {
   g('-c', 'user.email=t@t', '-c', 'user.name=t', 'add', '.'); g('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init');
 }
 
-async function mcp(home, cwd) {
-  const c = new Client({ name: 'test', version: '1' });
-  await c.connect(new StdioClientTransport({ command: process.execPath, args: [CLI, 'mcp'], cwd, env: { ...process.env, AGENTLINE_HOME: home }, stderr: 'inherit' }));
+async function mcp(home, cwd, { client = 'test', env = {} } = {}) {
+  const c = new Client({ name: client, version: '1' });
+  await c.connect(new StdioClientTransport({ command: process.execPath, args: [CLI, 'mcp'], cwd, env: { ...process.env, AGENTLINE_HOME: home, ...env }, stderr: 'inherit' }));
   return { c, call: async (name, args = {}) => text(await c.callTool({ name, arguments: args })) };
 }
 
@@ -149,6 +149,29 @@ test('a huge session is trimmed to fit one message', async () => {
   transcript(big, Array.from({ length: 60 }, (_, i) => [`step ${i}`, `did step ${i}`, 'cat log', noise()]));
   await hook(homeA, 'UserPromptSubmit', { session_id: 'sBig', cwd: repoA, transcript_path: big, prompt: 'share it' });
   assert.match(await A.call('share_session', { title: 'big one' }), /shared this session as #\d+ → everyone: "big one", \d+ entries/);
+});
+
+test('Cursor: shares its newest conversation for this folder', async () => {
+  const projects = join(root, 'cursor-projects');
+  const write = (slug, id, lines) => {
+    mkdirSync(join(projects, slug, 'agent-transcripts', id), { recursive: true });
+    writeFileSync(join(projects, slug, 'agent-transcripts', id, `${id}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  };
+  const user = (q) => ({ role: 'user', message: { content: [{ type: 'text', text: `<timestamp>Monday, Oct 12, 2026</timestamp>\n<user_query>\n${q}\n</user_query>` }] } });
+  const agent = (text, tool) => ({ role: 'assistant', message: { content: [{ type: 'text', text }, ...(tool ? [{ type: 'tool_use', name: 'Shell', input: { command: tool } }] : [])] } });
+  write('Users-someone-else', 'other', [user('unrelated project'), agent('nope')]);
+  await sleep(20);
+  const slug = repoA.replace(/^\/+/, '').replace(/[^A-Za-z0-9-]/g, '-');
+  write(slug, 'c1', [user('wire the billing webhook'), agent('Added a Stripe webhook handler in api/billing.ts', 'npm run test:billing'), { type: 'turn_ended', status: 'success' }]);
+  const C = await mcp(homeA, repoA, { client: 'cursor-vscode', env: { CURSOR_PROJECTS_DIR: projects } });
+  try {
+    assert.match(await C.call('share_session', { to: 'bob' }), /shared this session as #\d+ → bob: "wire the billing webhook", 3 entries/);
+  } finally { await C.c.close(); }
+  await sleep(200);
+  const out = await B.call('query_session', { query: 'billing webhook' });
+  assert.match(out, /\[1\] USER: wire the billing webhook\n\[2\] AGENT: Added a Stripe webhook handler/);
+  assert.ok(!out.includes('<user_query>') && !out.includes('timestamp'));
+  assert.match(await B.call('query_session', { entries: '3' }), /TOOL CALL: Shell: npm run test:billing/);
 });
 
 test('hub stores only ciphertext', () => {

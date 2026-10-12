@@ -179,7 +179,7 @@ const commands = {
       c.mcpServers = { ...(c.mcpServers || {}), agentline: { command: node, args: [CLI, 'mcp'] } };
       mkdirSync(dirname(p), { recursive: true });
       writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
-      console.log(`✓ Cursor MCP config updated (${p}). Cursor gets the tools; sharing the current session needs the Claude Code hooks.`);
+      console.log(`✓ Cursor MCP config updated (${p}). Cursor can share its current conversation and query shared sessions.`);
     }
     if (values.channel) console.log('Live push: start Claude Code with  claude --dangerously-load-development-channels server:agentline');
     console.log('Restart Claude Code sessions to pick it up.');

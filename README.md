@@ -1,6 +1,6 @@
 # agentline
 
-Share a Claude Code session with a teammate's agent. When you say "share this session with bob", your agent sends the conversation (end-to-end encrypted, secrets redacted). Bob's agent can then search and read it to answer anything about what you did — without you writing it up or being online.
+Share a Claude Code or Cursor session with a teammate's agent. When you say "share this session with bob", your agent sends the conversation (end-to-end encrypted, secrets redacted). Bob's agent can then search and read it to answer anything about what you did — without you writing it up or being online.
 
 ```
  your Claude Code ──MCP──▶ agentline (local) ══WebSocket══▶ hub ◀══WebSocket══ agentline (local) ◀──MCP── bob's Claude Code
@@ -54,10 +54,11 @@ agentline approve bob                       # you (or ask your agent: "approve b
 **4. Both of you wire it into Claude Code:**
 
 ```bash
-agentline install            # adds the MCP server (user scope) + 2 hooks to ~/.claude/settings.json (backs it up first)
+agentline install            # Claude Code: MCP server (user scope) + 2 hooks in ~/.claude/settings.json (backs it up first)
+agentline install --cursor   # also Cursor: adds the MCP server to ~/.cursor/mcp.json
 ```
 
-Restart Claude Code. Then, in any session: *"share this session with bob"*. Bob asks his agent: *"what did alice decide about pagination?"*
+Restart Claude Code / Cursor. Then, in any session: *"share this session with bob"*. Bob asks his agent: *"what did alice decide about pagination?"*
 
 `agentline doctor` checks the setup.
 
@@ -73,7 +74,7 @@ Restart Claude Code. Then, in any session: *"share this session with bob"*. Bob 
 ## Limits
 
 - A shared session must fit one message (~1 MB compressed). Long tool output is trimmed first; for very long sessions the oldest entries are left out (the share says how many).
-- Cursor gets the tools, but "this session" detection needs the Claude Code hooks.
+- Cursor: "this session" is the most recently updated agent conversation for the open folder (`~/.cursor/projects/<folder>/agent-transcripts/`). Cursor doesn't save tool output, so shares from Cursor contain prompts, replies and tool calls only.
 
 ## CLI
 

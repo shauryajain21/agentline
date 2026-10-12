@@ -1,6 +1,8 @@
-// Session sharing: turn a Claude Code transcript (JSONL) into compact, redacted entries, pack them
-// small enough for one hub message, and let a teammate's agent search/read them.
-import { readFileSync } from 'node:fs';
+// Session sharing: turn a Claude Code or Cursor transcript (JSONL) into compact, redacted entries,
+// pack them small enough for one hub message, and let a teammate's agent search/read them.
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { gzipSync, gunzipSync } from 'node:zlib';
 
 const MAX_GZ = 1_000_000;        // packed size budget; the hub caps a sealed message at 2MB
@@ -18,6 +20,31 @@ export function recordSession(store, input) {
 export function currentSession(store, cwd) {
   const here = store.get(`cur:${cwd}`), any = store.get('cur');
   return here && (!any || any.ts - here.ts < 10 * 60e3) ? here : any;
+}
+
+/**
+ * Cursor writes each agent conversation to ~/.cursor/projects/<folder-slug>/agent-transcripts/<id>/<id>.jsonl.
+ * "This session" = the most recently written one, preferring this folder's. The user's "share this
+ * session" prompt has just been appended to it, so it is the newest file.
+ */
+export function cursorSession(cwd) {
+  const root = process.env.CURSOR_PROJECTS_DIR || join(homedir(), '.cursor', 'projects');
+  if (!existsSync(root)) return null;
+  const newest = (dirs) => {
+    let best = null;
+    for (const d of dirs) {
+      const base = join(root, d, 'agent-transcripts');
+      let ids; try { ids = readdirSync(base); } catch { continue; }
+      for (const id of ids) {
+        const path = join(base, id, `${id}.jsonl`);
+        let st; try { st = statSync(path); } catch { continue; }
+        if (!best || st.mtimeMs > best.ts) best = { path, id, cwd, ts: st.mtimeMs, source: 'cursor' };
+      }
+    }
+    return best;
+  };
+  const slug = String(cwd || '').replace(/^\/+/, '').replace(/[^A-Za-z0-9-]/g, '-');
+  return (slug && newest([slug])) || newest(readdirSync(root));
 }
 
 const SECRETS = [
@@ -40,6 +67,8 @@ export function redact(text) {
 }
 
 const stripReminders = (s) => s.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim();
+// Cursor wraps the typed prompt: <timestamp>…</timestamp><user_query>…</user_query> (+ other context tags).
+const userText = (s) => { const q = s.match(/<user_query>([\s\S]*?)<\/user_query>/); return q ? q[1].trim() : stripReminders(s); };
 const flat = (c) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((b) => (b.type === 'text' ? b.text : '')).join('\n') : '');
 const clip = (s, n) => (s.length > n ? s.slice(0, n) + `… [${s.length - n} more chars]` : s);
 
@@ -49,7 +78,7 @@ function toolCall(b) {
   return `${b.name}: ${main !== undefined ? String(main) : JSON.stringify(i)}`;
 }
 
-/** Transcript JSONL -> [{ who: 'user'|'agent'|'tool'|'result', text }] (main thread only, no thinking). */
+/** Claude Code or Cursor transcript JSONL -> [{ who: 'user'|'agent'|'tool'|'result', text }] (main thread only, no thinking). */
 export function parseTranscript(path) {
   const entries = [];
   for (const line of readFileSync(path, 'utf8').split('\n')) {
@@ -57,14 +86,15 @@ export function parseTranscript(path) {
     let e; try { e = JSON.parse(line); } catch { continue; }
     if (e.isSidechain || e.isMeta || !e.message) continue;
     const c = e.message.content;
-    if (e.type === 'user') {
+    const type = e.type || e.role; // Claude Code: type, Cursor: role
+    if (type === 'user') {
       if (Array.isArray(c) && c.some((b) => b.type === 'tool_result')) {
         for (const b of c) if (b.type === 'tool_result') entries.push({ who: 'result', text: flat(b.content) });
       } else {
-        const text = stripReminders(flat(c));
+        const text = userText(flat(c));
         if (text && !text.startsWith('<command-') && !text.startsWith('<local-command')) entries.push({ who: 'user', text });
       }
-    } else if (e.type === 'assistant' && Array.isArray(c)) {
+    } else if (type === 'assistant' && Array.isArray(c)) {
       for (const b of c) {
         if (b.type === 'text' && b.text.trim()) entries.push({ who: 'agent', text: b.text.trim() });
         else if (b.type === 'tool_use') entries.push({ who: 'tool', text: toolCall(b) });
