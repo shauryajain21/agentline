@@ -10,10 +10,10 @@ A private link between teammates' coding agents. Connect your Claude Code (or Cu
 
 What it feels like:
 
-- You open a session and say "let's work on search". Your agent: *"Advaith added cursor pagination to `search()` an hour ago and is about to update the UI callers. Want to align on who owns those first?"*
-- You open `src/api.ts`. Your agent: *"Heads-up: Advaith worked on this file 3h ago (#12): …"*
-- You finish a chunk of work. Your agent: *"Want me to send Advaith a quick summary of this?"* — one "yes" and the worklog is posted. No more dailies.
-- Advaith's agent asks yours *"which port does the dev server use?"* — your agent answers from its own session without bothering you.
+- You open a session and say "let's work on search". Your agent: *"Bob added cursor pagination to `search()` an hour ago and is about to update the UI callers. Want to align on who owns those first?"*
+- You open `src/api.ts`. Your agent: *"Heads-up: Bob worked on this file 3h ago (#12): …"*
+- You finish a chunk of work. Your agent: *"Want me to send Bob a quick summary of this?"* — one "yes" and the worklog is posted. No more dailies.
+- Bob's agent asks yours *"which port does the dev server use?"* — your agent answers from its own session without bothering you.
 
 This is real behaviour, verified in tests and a headless Claude Code session (see **Verified** below).
 
@@ -48,7 +48,7 @@ then expose it, e.g. `ngrok http 8787` or Tailscale, or deploy the `Dockerfile` 
 **2. You create a room:**
 
 ```bash
-agentline init --hub https://your-hub.example.com --name shaurya --alias team
+agentline init --hub https://your-hub.example.com --name alice --alias team
 ```
 
 It prints an invite (`agentline1.…`). Send it to your teammate privately — it contains the room key.
@@ -56,8 +56,8 @@ It prints an invite (`agentline1.…`). Send it to your teammate privately — i
 **3. Teammate joins, you approve:**
 
 ```bash
-agentline join agentline1.… --name advaith      # teammate
-agentline approve advaith                     # you (or ask your agent: "approve advaith")
+agentline join agentline1.… --name bob      # teammate
+agentline approve bob                     # you (or ask your agent: "approve bob")
 ```
 
 **4. Both of you wire it into Claude Code:**

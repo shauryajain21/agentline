@@ -157,7 +157,7 @@ async function handle(t, event, input) {
   return null;
 }
 
-/** "Advaith touched this file 3h ago" — once per file per session. */
+/** "<teammate> touched this file 3h ago" — once per file per session. */
 function overlap(t, p, rel, session) {
   const key = `ovl:${session}`;
   const seen = new Set(t.store.get(key, []));

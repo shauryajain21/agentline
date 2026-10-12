@@ -15,8 +15,8 @@ import { openDb } from '../src/sqlite.mjs';
 
 const CLI = fileURLToPath(new URL('../src/cli.mjs', import.meta.url));
 const root = mkdtempSync(join(tmpdir(), 'agentline-e2e-'));
-const homeA = join(root, 'home-shaurya'), homeB = join(root, 'home-advaith');
-const repoA = join(root, 'shaurya-code', 'demo'), repoB = join(root, 'advaith-work', 'demo-checkout');
+const homeA = join(root, 'home-alice'), homeB = join(root, 'home-bob');
+const repoA = join(root, 'alice-code', 'demo'), repoB = join(root, 'bob-work', 'demo-checkout');
 let hub, A, B;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -52,10 +52,10 @@ async function mcp(home, cwd) {
 before(async () => {
   hub = await startHub({ port: 0, host: '127.0.0.1', dbPath: join(root, 'hub.db'), log: () => {} });
   makeRepo(repoA); makeRepo(repoB);
-  const out = await cli(homeA, 'init', '--hub', hub.url, '--name', 'shaurya', '--alias', 'pair');
+  const out = await cli(homeA, 'init', '--hub', hub.url, '--name', 'alice', '--alias', 'pair');
   const invite = out.match(/agentline1\.[\w-]+/)[0];
-  assert.match(await cli(homeB, 'join', invite, '--name', 'advaith'), /approve you/);
-  assert.match(await cli(homeA, 'approve', 'advaith'), /approved advaith/);
+  assert.match(await cli(homeB, 'join', invite, '--name', 'bob'), /approve you/);
+  assert.match(await cli(homeA, 'approve', 'bob'), /approved bob/);
   A = await mcp(homeA, repoA);
   B = await mcp(homeB, repoB);
   await sleep(300);
@@ -74,22 +74,22 @@ test('status + presence are shared', async () => {
   await A.call('status', { text: 'refactoring token signing in src/auth.ts' });
   await sleep(150);
   const team = await B.call('status');
-  assert.match(team, /shaurya: online — refactoring token signing/);
+  assert.match(team, /alice: online — refactoring token signing/);
   assert.match(team, /demo@main/);
 });
 
 test('direct message is pushed and appears in inbox once', async () => {
-  assert.match(await A.call('send', { text: 'heads up: TOKEN_TTL moving to config', to: 'advaith' }), /sent #\d+ → advaith/);
+  assert.match(await A.call('send', { text: 'heads up: TOKEN_TTL moving to config', to: 'bob' }), /sent #\d+ → bob/);
   const inbox = await B.call('inbox', { wait_s: 5 });
-  assert.match(inbox, /shaurya \(agent, demo@main\) → you/);
+  assert.match(inbox, /alice \(agent, demo@main\) → you/);
   assert.match(inbox, /TOKEN_TTL moving to config/);
   assert.equal(await B.call('inbox'), 'No new messages.');
 });
 
 test('ask waits for the other agent to answer in-thread', async () => {
-  const asking = B.call('ask', { question: 'what TTL do you want for refresh tokens?', to: 'shaurya', wait_s: 15 });
+  const asking = B.call('ask', { question: 'what TTL do you want for refresh tokens?', to: 'alice', wait_s: 15 });
   const q = await A.call('inbox', { wait_s: 5 });
-  const id = Number(q.match(/#(\d+) advaith.*question/)[1]);
+  const id = Number(q.match(/#(\d+) bob.*question/)[1]);
   await A.call('send', { text: '30 days, rotate on use', thread: id });
   const answer = await asking;
   assert.match(answer, /30 days, rotate on use/);
@@ -127,9 +127,9 @@ test('worklog + overlap detection across clones of the same repo', async () => {
   const logged = await A.call('log', { summary: 'Moved TOKEN_TTL to env config; sign() unchanged', next: 'refresh-token rotation' });
   assert.match(logged, /logged #\d+ for demo \(2 files\)/);
   await sleep(200);
-  // Advaith's agent opens the same file in *his* checkout -> heads-up about Shaurya's work.
+  // Bob's agent opens the same file in *their* checkout -> heads-up about Alice's work.
   const out = ctx(await hook(homeB, 'PostToolUse', { session_id: 'sB', cwd: repoB, tool_name: 'Read', tool_input: { file_path: join(repoB, 'src/auth.ts') } }));
-  assert.match(out, /Heads-up: shaurya worked on src\/auth\.ts/);
+  assert.match(out, /Heads-up: alice worked on src\/auth\.ts/);
   assert.match(out, /refresh-token rotation/);
   // only once per file per session
   assert.equal(ctx(await hook(homeB, 'PostToolUse', { session_id: 'sB', cwd: repoB, tool_name: 'Read', tool_input: { file_path: join(repoB, 'src/auth.ts') } })), '');
@@ -140,13 +140,13 @@ test('worklog + overlap detection across clones of the same repo', async () => {
 
 test('session start briefing tells the agent what the teammate did', async () => {
   const out = ctx(await hook(homeB, 'SessionStart', { session_id: 'sB2', cwd: repoB, source: 'startup' }));
-  assert.match(out, /linked with shaurya/);
+  assert.match(out, /linked with alice/);
   assert.match(out, /Moved TOKEN_TTL to env config/);
   assert.match(out, /Shared team memory/);
 });
 
 test('teammate messages are injected on the next prompt/tool call', async () => {
-  await A.call('send', { text: 'pushed the env change, pull before editing auth', to: 'advaith' });
+  await A.call('send', { text: 'pushed the env change, pull before editing auth', to: 'bob' });
   await sleep(200);
   const out = ctx(await hook(homeB, 'UserPromptSubmit', { session_id: 'sB2', cwd: repoB, prompt: 'continue' }));
   assert.match(out, /\[agentline\] 1 new/);
@@ -155,7 +155,7 @@ test('teammate messages are injected on the next prompt/tool call', async () => 
 });
 
 test('stop hook: unanswered teammate question blocks once, loop-guarded', async () => {
-  await A.call('send', { text: 'is the /v2/search endpoint paginated?', to: 'advaith', kind: 'question' });
+  await A.call('send', { text: 'is the /v2/search endpoint paginated?', to: 'bob', kind: 'question' });
   await sleep(200);
   const out = await hook(homeB, 'Stop', { session_id: 'sB3', cwd: repoB, stop_hook_active: false });
   assert.equal(out.decision, 'block');
@@ -170,7 +170,7 @@ test('stop hook: offers to share a worklog after real edits (autonomy=ask)', asy
   }
   const out = await hook(homeA, 'Stop', { session_id: 'sA2', cwd: repoA, stop_hook_active: false });
   assert.equal(out?.decision, 'block');
-  assert.match(out.reason, /offering to share a worklog with advaith/);
+  assert.match(out.reason, /offering to share a worklog with bob/);
   assert.equal(await hook(homeA, 'Stop', { session_id: 'sA2', cwd: repoA }), null); // not again right away
 });
 
@@ -178,7 +178,7 @@ test('shared permissions need both teammates to agree', async () => {
   assert.match(await A.call('permissions', { propose: { autonomy: 'auto' } }), /waiting for teammates/);
   await sleep(200);
   const b = await B.call('permissions');
-  assert.match(b, /Open proposal by shaurya: \{"autonomy":"auto"\} — waiting on advaith/);
+  assert.match(b, /Open proposal by alice: \{"autonomy":"auto"\} — waiting on bob/);
   assert.match(b, /autonomy=ask/);
   assert.match(await B.call('permissions', { accept: true }), /new permissions are in effect/);
   await sleep(200);
@@ -191,7 +191,7 @@ test('shared permissions need both teammates to agree', async () => {
 test('hooks fall back to HTTP when no MCP server is live', async () => {
   await B.c.close(); B = null;
   await sleep(200);
-  await A.call('send', { text: 'ping while your MCP is down', to: 'advaith' });
+  await A.call('send', { text: 'ping while your MCP is down', to: 'bob' });
   const out = ctx(await hook(homeB, 'UserPromptSubmit', { session_id: 'sB4', cwd: repoB, prompt: 'hi' }));
   assert.match(out, /ping while your MCP is down/);
 });
